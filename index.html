@@ -246,12 +246,14 @@
   }
 
   function project(point) {
-  // Simple perspective: projected x = (x/z)*fov + center
+  // 3D座標→2D投影: x/z・y/z比に視野角を掛けてスクリーン中央に足す
   const scale = settings.fov / (point.z || 0.0001);
   return {
   x: canvas.width / 2 + point.x * scale,
   y: canvas.height / 2 + point.y * scale
   };
+  }
+
   function loop(timestamp) {
   if (!state.lastTime) state.lastTime = timestamp;
   const dt = Math.min(0.033, (timestamp - state.lastTime) / 1000);
