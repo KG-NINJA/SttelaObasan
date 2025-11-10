@@ -40,8 +40,8 @@
     const settings = {
       starCount: 120,
       fov: 400,
-      spawnInterval: 1.2,
-      enemySpeed: 30,
+      spawnInterval: 1.5,
+      enemySpeed: 24,
       maxShield: 100,
       minSpeed: 20,
       maxSpeed: 120
@@ -82,17 +82,53 @@
   }
 
   function spawnEnemy() {
-  state.enemies.push({
+  const battleshipHeavy = 0.75;
+  if (Math.random() < battleshipHeavy) {
+  state.enemies.push(createBattleship());
+  } else {
+  state.enemies.push(createFighter());
+  }
+  }
+
+  function createFighter() {
+  return {
+  type: "fighter",
   x: (Math.random() - 0.5) * 120,
   y: (Math.random() - 0.5) * 80,
-  z: 300,
-  vx: (Math.random() - 0.5) * 10,
-  vy: (Math.random() - 0.5) * 8,
+  z: 320,
+  vx: (Math.random() - 0.5) * 6,
+  vy: (Math.random() - 0.5) * 5,
   flash: 0
+  };
+  }
+
+  function createBattleship() {
+  const segments = [];
+  const segmentCount = 4;
+  const spacing = 16;
+  for (let i = 0; i < segmentCount; i++) {
+  segments.push({
+  offsetX: (Math.random() - 0.5) * 4,
+  offsetY: (Math.random() - 0.5) * 3,
+  offsetZ: i * spacing,
+  destroyed: false,
+  size: i === 0 ? 11 : 9
   });
+  }
+  return {
+  type: "battleship",
+  x: (Math.random() - 0.5) * 100,
+  y: (Math.random() - 0.5) * 60,
+  z: 340,
+  vx: (Math.random() - 0.5) * 4,
+  vy: (Math.random() - 0.5) * 3,
+  flash: 0,
+  segments
+  };
   }
 
   function handleInput(dt) {
+  // 入力状態から機体姿勢と速度を更新
   const a = state.inputs;
   const turnSpeed = 40 * dt;
   if (a["arrowleft"] || a["a"]) state.yaw += turnSpeed;
@@ -113,6 +149,19 @@
   state.lasers.push({ x: state.yaw * 0.2, y: -state.pitch * 0.2, z: 10, vz: state.speed + 120 });
   }
 
+  function resetBattleshipSegments(enemy) {
+  if (!enemy.segments) return;
+  enemy.segments.forEach(seg => seg.destroyed = false);
+  }
+
+  function segmentWorldPosition(enemy, segment) {
+  return {
+  x: enemy.x + (segment.offsetX || 0),
+  y: enemy.y + (segment.offsetY || 0),
+  z: enemy.z + (segment.offsetZ || 0)
+  };
+  }
+
   function update(dt) {
   if (!state.running) return;
   handleInput(dt);
@@ -122,40 +171,65 @@
   spawnTimer = settings.spawnInterval;
   }
 
-      // Move stars based on player speed to sell motion
+      // 星を移動させて疑似的な速度感を演出
       for (const star of state.stars) {
         star.z -= dt * state.speed * 0.6;
         if (star.z < 5) star.z += 200;
       }
 
-      // Player rotation influences enemy positions for pseudo movement
+      // プレイヤー姿勢で敵配置もゆっくり揺らし、追われる感覚を簡易再現
       for (const enemy of state.enemies) {
         enemy.z -= dt * (settings.enemySpeed + state.speed * 0.5);
         enemy.x += dt * enemy.vx + state.yaw * dt * 0.5;
         enemy.y += dt * enemy.vy - state.pitch * dt * 0.5;
         if (enemy.z < 5) {
-          state.shield -= 20;
-          enemy.z = 400;
+          state.shield -= enemy.type === "battleship" ? 15 : 8;
+          enemy.z = 420;
+          if (enemy.segments) resetBattleshipSegments(enemy);
         }
         if (enemy.flash > 0) enemy.flash -= dt;
       }
 
-      // Update lasers and check hits
+      // レーザー移動とヒット判定
       for (const laser of state.lasers) {
         laser.z += laser.vz * dt;
       }
-      state.lasers = state.lasers.filter(l => l.z < 400);
+      state.lasers = state.lasers.filter(l => l.z < 400 && !l.done);
 
-      // Collision detection via distance in projected space
+      // 3D距離しきい値で命中判定（簡易スフィア）
       for (const enemy of state.enemies) {
         for (const laser of state.lasers) {
-          const dx = enemy.x - laser.x;
-          const dy = enemy.y - laser.y;
-          const dz = enemy.z - laser.z;
-          if (Math.abs(dz) < 10 && Math.hypot(dx, dy) < 6) {
-            enemy.flash = 0.2;
-            enemy.z = 400 + Math.random() * 100;
-            state.score += 100;
+          if (laser.done) continue;
+          if (enemy.type === "battleship") {
+            for (const segment of enemy.segments) {
+              if (segment.destroyed) continue;
+              const segPos = segmentWorldPosition(enemy, segment);
+              const dx = segPos.x - laser.x;
+              const dy = segPos.y - laser.y;
+              const dz = segPos.z - laser.z;
+              if (Math.abs(dz) < 16 && Math.hypot(dx, dy) < (segment.size + 2)) {
+                segment.destroyed = true;
+                enemy.flash = 0.2;
+                state.score += 120;
+                laser.done = true;
+                break;
+              }
+            }
+            if (enemy.segments.every(seg => seg.destroyed)) {
+              enemy.z = 420 + Math.random() * 120;
+              resetBattleshipSegments(enemy);
+              state.score += 200; // 艦撃破ボーナス
+            }
+          } else {
+            const dx = enemy.x - laser.x;
+            const dy = enemy.y - laser.y;
+            const dz = enemy.z - laser.z;
+            if (Math.abs(dz) < 12 && Math.hypot(dx, dy) < 6) {
+              enemy.flash = 0.2;
+              enemy.z = 420 + Math.random() * 120;
+              state.score += 100;
+              laser.done = true;
+            }
           }
         }
       }
@@ -172,7 +246,7 @@
   ctx.strokeStyle = "#0ff";
   ctx.lineWidth = 1;
 
-      // Draw stars
+      // 星のスキャンライン
       ctx.beginPath();
       for (const star of state.stars) {
         const p = project(star);
@@ -181,7 +255,7 @@
       }
       ctx.stroke();
 
-      // Draw lasers
+      // レーザーを細線で表示
       ctx.strokeStyle = "#0f0";
       for (const laser of state.lasers) {
         const p = project(laser);
@@ -191,18 +265,16 @@
         ctx.stroke();
       }
 
-      // Draw enemies wireframe cube
-      ctx.strokeStyle = "#f0f";
+      // 敵ワイヤーフレーム（小型/大型）を描画
       for (const enemy of state.enemies) {
-        const size = 6;
-        const verts = [
-          [-size, -size, -size], [size, -size, -size], [size, size, -size], [-size, size, -size],
-          [-size, -size, size], [size, -size, size], [size, size, size], [-size, size, size]
-        ].map(v => ({ x: enemy.x + v[0], y: enemy.y + v[1], z: enemy.z + v[2] }));
-        drawWireCube(verts, enemy.flash > 0 ? "#fff" : "#f0f");
+        if (enemy.type === "battleship") {
+          drawBattleship(enemy);
+        } else {
+          drawFighter(enemy);
+        }
       }
 
-      // Cockpit frame
+      // コクピット枠
       ctx.strokeStyle = "#0ff";
       ctx.beginPath();
       ctx.moveTo(0, canvas.height * 0.7);
@@ -211,7 +283,7 @@
       ctx.lineTo(canvas.width, canvas.height * 0.7);
       ctx.stroke();
 
-      // Reticle
+      // 中央レティクル
       ctx.beginPath();
       ctx.arc(canvas.width / 2, canvas.height / 2, 12, 0, Math.PI * 2);
       ctx.moveTo(canvas.width / 2 - 20, canvas.height / 2);
@@ -228,12 +300,46 @@
 
   }
 
-  function drawWireCube(verts, color) {
-  const edges = [
+  function drawFighter(enemy) {
+  drawWireCube({ x: enemy.x, y: enemy.y, z: enemy.z }, 6, enemy.flash > 0 ? "#fff" : "#f0f");
+  }
+
+  function drawBattleship(enemy) {
+  const color = enemy.flash > 0 ? "#fff" : "#0ff";
+  const centers = [];
+  for (const segment of enemy.segments) {
+  if (segment.destroyed) continue;
+  const pos = segmentWorldPosition(enemy, segment);
+  centers.push(pos);
+  drawWireCube(pos, segment.size || 9, color);
+  }
+  if (centers.length > 1) {
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < centers.length - 1; i++) {
+  const a = project(centers[i]);
+  const b = project(centers[i + 1]);
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  }
+  ctx.stroke();
+  }
+  }
+
+  function drawWireCube(center, size, color) {
+  const s = size;
+  const verts = [
+  [-s, -s, -s], [s, -s, -s], [s, s, -s], [-s, s, -s],
+  [-s, -s, s], [s, -s, s], [s, s, s], [-s, s, s]
+  ].map(v => ({ x: center.x + v[0], y: center.y + v[1], z: center.z + v[2] }));
+  drawWireShape(verts, [
   [0,1],[1,2],[2,3],[3,0],
   [4,5],[5,6],[6,7],[7,4],
   [0,4],[1,5],[2,6],[3,7]
-  ];
+  ], color);
+  }
+
+  function drawWireShape(verts, edges, color) {
   ctx.strokeStyle = color;
   ctx.beginPath();
   edges.forEach(([a,b]) => {
