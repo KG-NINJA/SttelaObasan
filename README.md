@@ -1,1 +1,11 @@
 # SttelaObasan
+  - W / ArrowUp: pitch nose down (aim lower)
+  - S / ArrowDown: pitch nose up (aim higher)
+  - A / ArrowLeft: yaw left
+  - D / ArrowRight: yaw right
+  - Q: roll left
+  - E: roll right
+  - Shift: boost speed
+  - Ctrl: reduce speed
+  - Space: fire laser
+  - R: restart after “MISSION FAILED”
