@@ -400,9 +400,11 @@
       z: baseZ ?? 360,
       vx: 0,
       vy: 0,
+
       retreatSpeed: 18,
       maxApproachRate: 20,
       recedeFactor: 0.32,
+
       flash: 0,
       segments,
       segmentMap,
@@ -781,6 +783,7 @@
       // プレイヤー姿勢で敵配置もゆっくり揺らし、追われる感覚を簡易再現
       for (const enemy of state.enemies) {
         enemy.age = (enemy.age || 0) + dt;
+
         const retreatSpeed = enemy.retreatSpeed ?? settings.enemyRetreatBase;
         const maxApproach = enemy.maxApproachRate ?? settings.maxApproachRate;
         const recedeFactor = enemy.recedeFactor ?? settings.enemyRecedeFactor;
@@ -794,6 +797,7 @@
             enemy.z += recede * dt;
           }
         }
+
         const formation = enemy.formationGroup ? state.formations[enemy.formationGroup] : null;
         if (formation && !enemy.pendingExplosion) {
           const targetX = formation.anchorX + (enemy.formationOffset?.x || 0);
