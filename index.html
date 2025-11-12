@@ -42,7 +42,7 @@
       enemyShots: [],
       debugMode: false,
       loopCount: 0,
-      loopMessageTimer: 0,
+      messageTimer: 0,
       formations: {}
     };
     const settings = {
@@ -62,7 +62,8 @@
       battleships: 1,
       escortsPerShip: 2,
       fighterWaves: 3,
-      fightersPerWave: 5
+      fightersPerWave: 5,
+      dreadnoughtEscorts: 4
     };
     const enemyFireSettings = {
       minDelay: 2.5,
@@ -86,6 +87,17 @@
         battleships: true,
         waveInterval: 18,
         battleSpacing: 24
+      },
+      {
+        label: "旗艦",
+        baseZ: 150,
+        startDelay: 26,
+        fighterWaves: 1,
+        fightersPerWave: 8,
+        corvettes: 4,
+        dreadnought: true,
+        dreadnoughtEscorts: 6,
+        waveInterval: 14
       }
     ];
 
@@ -112,6 +124,7 @@
   state.shield = settings.maxShield;
   state.score = 0;
   message.textContent = "";
+  state.messageTimer = 0;
   setupStage();
   }
 
@@ -135,6 +148,11 @@
     state.formations = {};
   }
 
+  function showMessage(text, duration = 3) {
+    message.textContent = text;
+    state.messageTimer = duration;
+  }
+
   function handleSpawnTimer() {
     while (state.zoneSpawnIndex < stageZones.length) {
       const zone = stageZones[state.zoneSpawnIndex];
@@ -143,6 +161,7 @@
       spawnZoneFighters(zone);
       if (zone.corvettes) spawnZoneCorvettes(zone);
       if (zone.battleships) spawnZoneBattleships(zone);
+      if (zone.dreadnought) spawnZoneDreadnought(zone);
     }
   }
 
@@ -170,12 +189,11 @@
 
   function loopStage() {
     state.loopCount += 1;
-    state.loopMessageTimer = 1.8;
     state.lasers = [];
     state.enemyShots = [];
     state.explosions = [];
     setupStage();
-    message.textContent = `STAGE MAP LOOP ${state.loopCount}`;
+    showMessage(`STAGE MAP LOOP ${state.loopCount}`, 1.8);
   }
 
   function spawnZoneFighters(zone) {
@@ -240,6 +258,24 @@
     }
   }
 
+  function spawnZoneDreadnought(zone) {
+    const baseX = 0;
+    const baseY = (Math.random() - 0.5) * 14;
+    const baseZ = zone.baseZ || 150;
+    const dread = createDreadnought(baseX, baseY, baseZ);
+    state.enemies.push(dread);
+    const escorts = zone.dreadnoughtEscorts ?? stageConfig.dreadnoughtEscorts;
+    for (let i = 0; i < escorts; i++) {
+      const angle = (Math.PI * 2 * i) / escorts;
+      const radius = 22 + (i % 2) * 5;
+      const offsetX = baseX + Math.cos(angle) * radius;
+      const offsetY = baseY + Math.sin(angle) * radius * 0.6;
+      const offsetZ = baseZ + 8 + i * 3;
+      state.enemies.push(createEscort(offsetX, offsetY, offsetZ));
+    }
+    showMessage("FLAGSHIP DETECTED - DESTROY CORE", 4.5);
+  }
+
   function createFighter(x, y, z) {
   return {
   type: "fighter",
@@ -256,6 +292,7 @@
   pendingExplosionColor: "#f0f",
   pendingExplosionScore: 100,
   pendingMegaExplosion: false,
+  megaExplosionHandler: null,
   scoreAwarded: false
   };
   }
@@ -277,6 +314,7 @@
   pendingExplosionColor: "#0f9",
   pendingExplosionScore: 150,
   pendingMegaExplosion: false,
+  megaExplosionHandler: null,
   scoreAwarded: false
   };
   }
@@ -312,11 +350,56 @@
   pendingExplosionColor: "#fff",
   pendingExplosionScore: 200,
   pendingMegaExplosion: false,
+  megaExplosionHandler: null,
   scoreAwarded: false,
   explosionDelay: 0,
   cumulativeDamage: 0,
   damageThreshold: segmentCount * 45
   };
+  }
+
+  function createDreadnought(baseX, baseY, baseZ) {
+    const blueprint = [
+      { key: "engineL", offsetX: -18, offsetY: 5, offsetZ: -24, hp: 3, size: 12, score: 200, turret: true, fireDelay: 2.8 },
+      { key: "engineR", offsetX: 18, offsetY: 5, offsetZ: -24, hp: 3, size: 12, score: 200, turret: true, fireDelay: 2.8 },
+      { key: "hangar", offsetX: 0, offsetY: 9, offsetZ: -8, hp: 4, size: 14, score: 260, turret: true, fireDelay: 2.4 },
+      { key: "shield", offsetX: 0, offsetY: 0, offsetZ: -4, hp: 4, size: 15, score: 280, generator: true },
+      { key: "bridge", offsetX: 0, offsetY: -6, offsetZ: 10, hp: 3, size: 12, score: 320, requires: ["shield"], turret: true, fireDelay: 3.2 },
+      { key: "core", offsetX: 0, offsetY: 0, offsetZ: 22, hp: 5, size: 10, score: 900, requires: ["engineL", "engineR", "hangar", "bridge"], final: true }
+    ];
+    const segments = blueprint.map(seg => ({
+      ...seg,
+      destroyed: false
+    }));
+    const segmentMap = {};
+    for (const segment of segments) {
+      segmentMap[segment.key] = segment;
+    }
+    return {
+      type: "dreadnought",
+      x: baseX ?? (Math.random() - 0.5) * 40,
+      y: baseY ?? (Math.random() - 0.5) * 24,
+      z: baseZ ?? 360,
+      vx: 0,
+      vy: 0,
+      advanceSpeed: 11,
+      flash: 0,
+      segments,
+      segmentMap,
+      fireTimer: 0,
+      fireDelay: 3,
+      turretTimers: {},
+      retired: false,
+      pendingExplosion: false,
+      pendingExplosionColor: "#fff",
+      pendingExplosionScore: 900,
+      pendingMegaExplosion: false,
+      megaExplosionHandler: null,
+      scoreAwarded: false,
+      explosionDelay: 0,
+      driftPhase: Math.random() * Math.PI * 2,
+      coreAnnounced: false
+    };
   }
 
   function handleInput(dt) {
@@ -408,20 +491,43 @@
     }
   }
 
-  function queueDelayedExplosion(enemy, { delay = 0.6, color = "#fff", score = 0, mega = false } = {}) {
+  function spawnShieldSpark(x, y, z, color = "#0ff") {
+    for (let i = 0; i < 14; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 20 + Math.random() * 40;
+      state.explosions.push({
+        x,
+        y,
+        z,
+        vx: Math.cos(angle) * speed * 0.04,
+        vy: Math.sin(angle) * speed * 0.04,
+        vz: (Math.random() - 0.5) * speed * 0.08,
+        life: 0.2 + Math.random() * 0.25,
+        color
+      });
+    }
+  }
+
+  function queueDelayedExplosion(enemy, { delay = 0.6, color = "#fff", score = 0, mega = false, megaHandler = null } = {}) {
     if (enemy.pendingExplosion) return;
     enemy.dead = true;
     enemy.pendingExplosion = true;
     enemy.explosionDelay = delay;
     enemy.pendingExplosionColor = color;
     enemy.pendingExplosionScore = score;
-    enemy.pendingMegaExplosion = mega;
+    enemy.pendingMegaExplosion = Boolean(mega);
+    enemy.megaExplosionHandler = megaHandler;
     enemy.flash = 0.6;
     enemy.scoreAwarded = false;
   }
 
   function queueBattleshipExplosion(enemy) {
     queueDelayedExplosion(enemy, { delay: 0.75, color: "#fff", score: 200, mega: true });
+  }
+
+  function queueDreadnoughtExplosion(enemy) {
+    queueDelayedExplosion(enemy, { delay: 1.3, color: "#fff", score: 1200, mega: true, megaHandler: spawnDreadnoughtCataclysm });
+    showMessage("FLAGSHIP NEUTRALIZED", 4.2);
   }
 
   function applyBattleshipSegmentDamage(enemy, segment, segPos) {
@@ -437,6 +543,41 @@
     if (enemy.cumulativeDamage >= enemy.damageThreshold && !enemy.pendingExplosion) {
       enemy.dead = true;
       queueBattleshipExplosion(enemy);
+    }
+  }
+
+  function applyDreadnoughtSegmentDamage(enemy, segment, segPos) {
+    if (segment.destroyed) return;
+    if (isSegmentLocked(enemy, segment)) {
+      spawnShieldSpark(segPos.x, segPos.y, segPos.z, "#0ff");
+      enemy.flash = 0.12;
+      return;
+    }
+    const maxScore = segment.score ?? 400;
+    const partialScore = Math.max(80, Math.floor(maxScore * 0.25));
+    const wasFinalHit = (segment.hp ?? 1) <= 1;
+    segment.hp = Math.max(0, (segment.hp ?? 1) - 1);
+    enemy.flash = 0.25;
+    const color = segment.generator ? "#0ff" : segment.final ? "#fff" : "#0ff";
+    spawnExplosion(segPos.x, segPos.y, segPos.z, color, wasFinalHit ? 28 : 16);
+    if (segment.hp <= 0) {
+      segment.destroyed = true;
+      state.score += maxScore;
+      spawnLingeringExplosion(segPos.x, segPos.y, segPos.z, color);
+      if (segment.generator) {
+        showMessage("SHIELD GENERATOR DOWN", 3.2);
+      }
+      if (segment.final) {
+        queueDreadnoughtExplosion(enemy);
+      } else {
+        const core = enemy.segmentMap?.core;
+        if (core && !core.destroyed && !isSegmentLocked(enemy, core) && !enemy.coreAnnounced) {
+          enemy.coreAnnounced = true;
+          showMessage("CORE EXPOSED - FINISH IT", 3.8);
+        }
+      }
+    } else {
+      state.score += partialScore;
     }
   }
 
@@ -465,23 +606,62 @@
     spawnExplosion(center.x, center.y, center.z, "#fff", 20);
   }
 
+  function spawnDreadnoughtCataclysm(enemy) {
+    const center = { x: enemy.x, y: enemy.y, z: enemy.z };
+    const ringColors = ["#fff", "#0ff", "#f88"];
+    for (let ring = 0; ring < 3; ring++) {
+      const count = 28 + ring * 18;
+      const radius = 10 + ring * 9;
+      const color = ringColors[ring % ringColors.length];
+      for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count;
+        const speed = 28 + ring * 12 + Math.random() * 10;
+        state.explosions.push({
+          x: center.x + Math.cos(angle) * radius * 0.25,
+          y: center.y + Math.sin(angle) * radius * 0.25,
+          z: center.z + ring * 4,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          vz: (Math.random() - 0.5) * speed * 0.6,
+          life: 1 + Math.random() * 1.2,
+          color
+        });
+      }
+    }
+    spawnExplosion(center.x, center.y, center.z, "#fff", 40);
+    spawnLingeringExplosion(center.x, center.y, center.z + 6, "#0ff");
+  }
+
   // 敵が自機の前方にいて死角でないかを確認
   function canEnemyShoot(enemy) {
-    if (enemy.z < enemyFireSettings.behindThreshold) return false;
-    if (Math.abs(enemy.x) > enemyFireSettings.blindCone) return false;
-    if (Math.abs(enemy.y) > enemyFireSettings.verticalCone) return false;
-    return true;
+    return withinForwardConePosition(enemy);
   }
 
   function isEnemyVisible(enemy) {
-    if (enemy.z <= 10) return false;
-    const proj = project(enemy);
+    return isPositionVisible(enemy);
+  }
+
+  function withinForwardConePosition(position) {
+    if (!position) return false;
+    if (position.z < enemyFireSettings.behindThreshold) return false;
+    if (Math.abs(position.x) > enemyFireSettings.blindCone) return false;
+    if (Math.abs(position.y) > enemyFireSettings.verticalCone) return false;
+    return true;
+  }
+
+  function isPositionVisible(position) {
+    if (!position || position.z <= 10) return false;
+    const proj = project(position);
     return proj.x > -40 && proj.x < canvas.width + 40 && proj.y > -40 && proj.y < canvas.height + 40;
   }
 
   // 後方からは発射せず、規定時間ごとにレーザーを射出
   function attemptEnemyFire(enemy, dt) {
     if (enemy.retired || enemy.pendingExplosion) return;
+    if (enemy.type === "dreadnought") {
+      attemptDreadnoughtFire(enemy, dt);
+      return;
+    }
     enemy.fireTimer += dt;
     if (enemy.fireTimer < enemy.fireDelay) return;
     enemy.fireTimer = 0;
@@ -502,11 +682,42 @@
   }
 
   function aimAtPlayer(enemy) {
-    const dx = -enemy.x;
-    const dy = -enemy.y;
-    const dz = -enemy.z;
+    return aimFromPoint(enemy);
+  }
+
+  function aimFromPoint(point) {
+    const dx = -point.x;
+    const dy = -point.y;
+    const dz = -point.z;
     const mag = Math.hypot(dx, dy, dz) || 0.0001;
     return { x: dx / mag, y: dy / mag, z: dz / mag };
+  }
+
+  function attemptDreadnoughtFire(enemy, dt) {
+    enemy.turretTimers = enemy.turretTimers || {};
+    for (const segment of enemy.segments) {
+      if (!segment.turret || segment.destroyed) continue;
+      if (isSegmentLocked(enemy, segment)) continue;
+      const segPos = segmentWorldPosition(enemy, segment);
+      if (!withinForwardConePosition(segPos)) continue;
+      if (!isPositionVisible(segPos)) continue;
+      enemy.turretTimers[segment.key] = (enemy.turretTimers[segment.key] || 0) + dt;
+      const delay = segment.fireDelay || enemy.fireDelay || 3.2;
+      if (enemy.turretTimers[segment.key] < delay) continue;
+      enemy.turretTimers[segment.key] = Math.random() * 0.8;
+      if (Math.random() > 0.65) continue;
+      const dir = aimFromPoint(segPos);
+      const speed = 22 + Math.random() * 12;
+      state.enemyShots.push({
+        x: segPos.x,
+        y: segPos.y,
+        z: segPos.z - 6,
+        vx: dir.x * speed,
+        vy: dir.y * speed,
+        vz: dir.z * speed,
+        done: false
+      });
+    }
   }
   function resetBattleshipSegments(enemy) {
   if (!enemy.segments) return;
@@ -521,11 +732,19 @@
   };
   }
 
+  function isSegmentLocked(enemy, segment) {
+    if (!segment?.requires || !enemy?.segmentMap) return false;
+    return segment.requires.some(key => {
+      const req = enemy.segmentMap[key];
+      return req && !req.destroyed;
+    });
+  }
+
   function update(dt) {
   if (!state.running) return;
-  if (state.loopMessageTimer > 0) {
-    state.loopMessageTimer -= dt;
-    if (state.loopMessageTimer <= 0) {
+  if (state.messageTimer > 0) {
+    state.messageTimer -= dt;
+    if (state.messageTimer <= 0) {
       message.textContent = "";
     }
   }
@@ -542,7 +761,8 @@
       // プレイヤー姿勢で敵配置もゆっくり揺らし、追われる感覚を簡易再現
       for (const enemy of state.enemies) {
         enemy.age = (enemy.age || 0) + dt;
-        enemy.z -= dt * (settings.enemySpeed + state.speed * 0.4);
+        const advance = enemy.advanceSpeed ?? (settings.enemySpeed + state.speed * 0.4);
+        enemy.z -= dt * advance;
         const formation = enemy.formationGroup ? state.formations[enemy.formationGroup] : null;
         if (formation && !enemy.pendingExplosion) {
           const targetX = formation.anchorX + (enemy.formationOffset?.x || 0);
@@ -557,6 +777,10 @@
         if (enemy.type === "corvette") {
           enemy.x += Math.sin(enemy.age * 1.8 + enemy.phase) * 6 * dt;
           enemy.y += Math.cos(enemy.age * 1.2 + enemy.phase) * 3 * dt;
+        } else if (enemy.type === "dreadnought") {
+          const sway = enemy.pendingExplosion ? 0 : 1;
+          enemy.x += Math.sin(enemy.age * 0.35 + enemy.driftPhase) * dt * 8 * sway;
+          enemy.y += Math.cos(enemy.age * 0.28 + enemy.driftPhase) * dt * 4 * sway;
         }
         if (enemy.pendingExplosion) {
           // 爆発までの遅延演出を進める
@@ -564,7 +788,11 @@
           enemy.flash = Math.max(0, enemy.flash - dt);
           if (enemy.explosionDelay <= 0) {
             if (enemy.pendingMegaExplosion) {
-              spawnBattleshipMegaExplosion(enemy);
+              if (enemy.megaExplosionHandler) {
+                enemy.megaExplosionHandler(enemy);
+              } else {
+                spawnBattleshipMegaExplosion(enemy);
+              }
             } else {
               spawnLingeringExplosion(enemy.x, enemy.y, enemy.z, enemy.pendingExplosionColor || "#fff");
             }
@@ -573,18 +801,24 @@
               enemy.scoreAwarded = true;
             }
             enemy.retired = true;
+            enemy.megaExplosionHandler = null;
             releaseFormationSlot(enemy);
           }
           continue;
         }
         attemptEnemyFire(enemy, dt);
         if (enemy.z < 5 && !enemy.dead) {
-          const damage = enemy.type === "battleship" ? 25 : enemy.type === "corvette" ? 12 : 6;
+          const damage = enemy.type === "dreadnought" ? 40 : enemy.type === "battleship" ? 25 : enemy.type === "corvette" ? 12 : 6;
           if (!state.debugMode) state.shield -= damage;
           enemy.dead = true;
           enemy.retired = true;
           releaseFormationSlot(enemy);
-          spawnExplosion(enemy.x, enemy.y, enemy.z, enemy.type === "battleship" ? "#fff" : "#f44", 18);
+          if (enemy.type === "dreadnought") {
+            spawnDreadnoughtCataclysm(enemy);
+          } else {
+            const color = enemy.type === "battleship" ? "#fff" : "#f44";
+            spawnExplosion(enemy.x, enemy.y, enemy.z, color, 18);
+          }
         }
         if (enemy.flash > 0) enemy.flash -= dt;
       }
@@ -619,7 +853,20 @@
       for (const enemy of state.enemies) {
         for (const laser of state.lasers) {
           if (laser.done) continue;
-          if (enemy.type === "battleship") {
+          if (enemy.type === "dreadnought") {
+            for (const segment of enemy.segments) {
+              if (segment.destroyed) continue;
+              const segPos = segmentWorldPosition(enemy, segment);
+              const dx = segPos.x - laser.x;
+              const dy = segPos.y - laser.y;
+              const dz = segPos.z - laser.z;
+              if (Math.abs(dz) < 18 && Math.hypot(dx, dy) < (segment.size + 3)) {
+                applyDreadnoughtSegmentDamage(enemy, segment, segPos);
+                laser.done = true;
+                break;
+              }
+            }
+          } else if (enemy.type === "battleship") {
             for (const segment of enemy.segments) {
               if (segment.destroyed) continue;
               const segPos = segmentWorldPosition(enemy, segment);
@@ -699,7 +946,9 @@
 
       // 敵ワイヤーフレーム（小型/大型）を描画
       for (const enemy of state.enemies) {
-        if (enemy.type === "battleship") {
+        if (enemy.type === "dreadnought") {
+          drawDreadnought(enemy);
+        } else if (enemy.type === "battleship") {
           drawBattleship(enemy);
         } else if (enemy.type === "corvette") {
           drawCorvette(enemy);
@@ -735,9 +984,24 @@
 
       drawRotatedCrosshair();
 
+      const hudLines = [];
       const shieldText = state.debugMode ? "∞" : Math.max(state.shield, 0);
-      const debugBadge = state.debugMode ? "   DEBUG MODE" : "";
-      hud.textContent = `SPEED ${state.speed.toFixed(0)}   SHIELD ${shieldText}   SCORE ${state.score}${debugBadge}`;
+      let baseLine = `SPEED ${state.speed.toFixed(0)}   SHIELD ${shieldText}   SCORE ${state.score}`;
+      if (state.debugMode) baseLine += "   DEBUG MODE";
+      hudLines.push(baseLine);
+      const flagship = state.enemies.find(e => e.type === "dreadnought" && !e.retired);
+      if (flagship) {
+        const total = flagship.segments.length;
+        const destroyed = flagship.segments.filter(seg => seg.destroyed).length;
+        const locked = flagship.segments.filter(seg => !seg.destroyed && isSegmentLocked(flagship, seg)).length;
+        const status = flagship.pendingExplosion
+          ? "SCUTTLE"
+          : locked > 0
+            ? `LOCK ${locked}`
+            : "CORE OPEN";
+        hudLines.push(`FLAGSHIP ${destroyed}/${total}   ${status}`);
+      }
+      hud.textContent = hudLines.join("\n");
 
   }
 
@@ -861,6 +1125,59 @@
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
     ctx.stroke();
+    }
+  });
+  }
+
+  function drawDreadnought(enemy) {
+  const color = enemy.flash > 0 ? "#fff" : "#0ff";
+  withDepthRendering(enemy, color, () => {
+    const prow = project({ x: enemy.x, y: enemy.y - 6, z: enemy.z - 34 });
+    const stern = project({ x: enemy.x, y: enemy.y + 4, z: enemy.z + 22 });
+    ctx.beginPath();
+    ctx.moveTo(prow.x, prow.y);
+    ctx.lineTo(stern.x, stern.y);
+    ctx.stroke();
+    const hullLeft = project({ x: enemy.x - 24, y: enemy.y + 6, z: enemy.z - 6 });
+    const hullRight = project({ x: enemy.x + 24, y: enemy.y + 6, z: enemy.z - 6 });
+    ctx.beginPath();
+    ctx.moveTo(hullLeft.x, hullLeft.y);
+    ctx.lineTo(prow.x, prow.y);
+    ctx.lineTo(hullRight.x, hullRight.y);
+    ctx.stroke();
+    const keelLeft = project({ x: enemy.x - 18, y: enemy.y + 2, z: enemy.z + 12 });
+    const keelRight = project({ x: enemy.x + 18, y: enemy.y + 2, z: enemy.z + 12 });
+    ctx.beginPath();
+    ctx.moveTo(keelLeft.x, keelLeft.y);
+    ctx.lineTo(stern.x, stern.y);
+    ctx.lineTo(keelRight.x, keelRight.y);
+    ctx.stroke();
+    const intactSegments = [];
+    for (const segment of enemy.segments) {
+      if (segment.destroyed) continue;
+      const segPos = segmentWorldPosition(enemy, segment);
+      const locked = isSegmentLocked(enemy, segment);
+      const segColor = locked ? "#066" : color;
+      drawGuideFrame(segPos, segment.size || 12, segColor);
+      if (segment.final && !locked) {
+        const center = project(segPos);
+        const cross = (segment.size || 10) * 0.6;
+        ctx.beginPath();
+        ctx.moveTo(center.x - cross, center.y);
+        ctx.lineTo(center.x + cross, center.y);
+        ctx.moveTo(center.x, center.y - cross);
+        ctx.lineTo(center.x, center.y + cross);
+        ctx.stroke();
+      }
+      intactSegments.push({ pos: segPos, locked });
+    }
+    for (let i = 0; i < intactSegments.length - 1; i++) {
+      const a = project(intactSegments[i].pos);
+      const b = project(intactSegments[i + 1].pos);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
     }
   });
   }
