@@ -48,7 +48,10 @@
     const settings = {
       starCount: 120,
       fov: 400,
-      enemySpeed: 24,
+      enemyRetreatBase: 32,
+      formationRetreatBase: 30,
+      maxApproachRate: 34,
+      enemyRecedeFactor: 0.45,
       maxShield: 100,
       minSpeed: 20,
       maxSpeed: 120,
@@ -168,12 +171,19 @@
   function updateFormationAnchors(dt) {
     const targetX = state.yaw * 3;
     const targetY = -state.pitch * 1.5;
-    const zSpeed = (settings.enemySpeed + state.speed * 0.4) * 0.8;
+    const anchorRetreat = settings.formationRetreatBase ?? settings.enemyRetreatBase;
+    const relativeForward = state.speed - anchorRetreat;
     Object.keys(state.formations).forEach(id => {
       const formation = state.formations[id];
       formation.anchorX += (targetX - formation.anchorX) * dt * 1.6;
       formation.anchorY += (targetY - formation.anchorY) * dt * 1.2;
-      formation.anchorZ -= zSpeed * dt;
+      if (relativeForward > 0) {
+        const approach = Math.min(relativeForward, settings.maxApproachRate);
+        formation.anchorZ -= approach * dt;
+      } else if (relativeForward < 0) {
+        const recede = Math.min(anchorRetreat, -relativeForward) * settings.enemyRecedeFactor;
+        formation.anchorZ += recede * dt;
+      }
       if (formation.members <= 0) {
         delete state.formations[id];
       }
@@ -284,6 +294,8 @@
   z: z ?? 320,
   vx: (Math.random() - 0.5) * 4,
   vy: (Math.random() - 0.5) * 4,
+  retreatSpeed: settings.enemyRetreatBase + Math.random() * 6,
+  maxApproachRate: settings.maxApproachRate + Math.random() * 2,
   flash: 0,
   fireTimer: Math.random() * enemyFireSettings.maxDelay,
   fireDelay: enemyFireSettings.minDelay + Math.random() * (enemyFireSettings.maxDelay - enemyFireSettings.minDelay),
@@ -305,6 +317,9 @@
   z,
   vx: (Math.random() - 0.5) * 3,
   vy: (Math.random() - 0.5) * 3,
+  retreatSpeed: settings.enemyRetreatBase - 2 + Math.random() * 4,
+  maxApproachRate: settings.maxApproachRate - 2 + Math.random() * 2,
+  recedeFactor: settings.enemyRecedeFactor,
   phase: Math.random() * Math.PI * 2,
   flash: 0,
   fireTimer: Math.random() * enemyFireSettings.maxDelay,
@@ -338,6 +353,9 @@
   x: baseX ?? (Math.random() - 0.5) * 100,
   y: baseY ?? (Math.random() - 0.5) * 60,
   z: baseZ ?? 340,
+  retreatSpeed: 24 + Math.random() * 4,
+  maxApproachRate: 26,
+  recedeFactor: 0.38,
   vx: (Math.random() - 0.5) * 4,
   vy: (Math.random() - 0.5) * 3,
   flash: 0,
@@ -382,7 +400,11 @@
       z: baseZ ?? 360,
       vx: 0,
       vy: 0,
-      advanceSpeed: 11,
+
+      retreatSpeed: 18,
+      maxApproachRate: 20,
+      recedeFactor: 0.32,
+
       flash: 0,
       segments,
       segmentMap,
@@ -761,8 +783,21 @@
       // プレイヤー姿勢で敵配置もゆっくり揺らし、追われる感覚を簡易再現
       for (const enemy of state.enemies) {
         enemy.age = (enemy.age || 0) + dt;
-        const advance = enemy.advanceSpeed ?? (settings.enemySpeed + state.speed * 0.4);
-        enemy.z -= dt * advance;
+
+        const retreatSpeed = enemy.retreatSpeed ?? settings.enemyRetreatBase;
+        const maxApproach = enemy.maxApproachRate ?? settings.maxApproachRate;
+        const recedeFactor = enemy.recedeFactor ?? settings.enemyRecedeFactor;
+        if (!enemy.pendingExplosion) {
+          const relativeForward = state.speed - retreatSpeed;
+          if (relativeForward > 0) {
+            const approach = Math.min(relativeForward, maxApproach);
+            enemy.z -= approach * dt;
+          } else if (relativeForward < 0) {
+            const recede = Math.min(retreatSpeed, -relativeForward) * recedeFactor;
+            enemy.z += recede * dt;
+          }
+        }
+
         const formation = enemy.formationGroup ? state.formations[enemy.formationGroup] : null;
         if (formation && !enemy.pendingExplosion) {
           const targetX = formation.anchorX + (enemy.formationOffset?.x || 0);
@@ -774,6 +809,12 @@
         }
         enemy.x += dt * enemy.vx + state.yaw * dt * 0.4;
         enemy.y += dt * enemy.vy - state.pitch * dt * 0.4;
+        if (enemy.z > 420 && !enemy.dead) {
+          enemy.dead = true;
+          enemy.retired = true;
+          releaseFormationSlot(enemy);
+          continue;
+        }
         if (enemy.type === "corvette") {
           enemy.x += Math.sin(enemy.age * 1.8 + enemy.phase) * 6 * dt;
           enemy.y += Math.cos(enemy.age * 1.2 + enemy.phase) * 3 * dt;
