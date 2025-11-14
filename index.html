@@ -65,59 +65,86 @@
     };
     const stageConfig = {
       battleships: 1,
-      escortsPerShip: 2,
-      fighterWaves: 3,
-      fightersPerWave: 5,
+      escortsPerShip: 1,
+      fighterWaves: 2,
+      fightersPerWave: 4,
       dreadnoughtEscorts: 4
     };
     const enemyFireSettings = {
-      minDelay: 2.5,
-      maxDelay: 5.5,
+      minDelay: 4.6,
+      maxDelay: 8.2,
       blindCone: 52,
       verticalCone: 22,
       behindThreshold: 18,
-      fireChance: 0.25
+      fireChance: 0.12
     };
     const explosionSettings = {
-      extraDelay: 0.2
+      extraDelay: 0.35
     };
     const stageZones = [
-      { label: "初動", baseZ: 300, startDelay: 4, fighterWaves: 2, fightersPerWave: 8, waveInterval: 11 },
-      { label: "増援", baseZ: 255, startDelay: 8, fighterWaves: 2, fightersPerWave: 7, corvettes: 2, waveInterval: 14 },
-      { label: "中盤", baseZ: 220, startDelay: 12, fighterWaves: 1, fightersPerWave: 6, corvettes: 4, waveInterval: 16 },
+      { label: "初動", baseZ: 300, startDelay: 4, fighterWaves: 1, fightersPerWave: 6, waveInterval: 11 },
+      { label: "増援", baseZ: 255, startDelay: 8, fighterWaves: 1, fightersPerWave: 6, corvettes: 1, waveInterval: 14 },
+      { label: "中盤", baseZ: 220, startDelay: 12, fighterWaves: 1, fightersPerWave: 5, corvettes: 2, waveInterval: 16 },
       {
         label: "決戦",
         baseZ: 190,
         startDelay: 18,
-        fighterWaves: 2,
-        fightersPerWave: 5,
-        corvettes: 6,
+        fighterWaves: 1,
+        fightersPerWave: 6,
+        corvettes: 3,
         battleships: true,
         waveInterval: 18,
         battleSpacing: 24
+      },
+      // ステージ後半に艦隊一斉出撃を詰め込むゾーン
+      {
+        label: "艦隊戦",
+        baseZ: 205,
+        startDelay: 22,
+        fighterWaves: 2,
+        fightersPerWave: 7,
+        corvettes: 4,
+        battleships: true,
+        battleshipCount: 2,
+        escortsPerShip: 2,
+        fleetEscortRing: 2,
+        fleetEscortRadius: 16,
+        fleetEscortOffsetZ: 4,
+        waveInterval: 14,
+        battleSpacing: 22,
+        message: "艦隊戦突入 - 護衛群を突破せよ"
       },
       {
         label: "旗艦",
         baseZ: 150,
         startDelay: 26,
         fighterWaves: 1,
-        fightersPerWave: 8,
-        corvettes: 4,
+        fightersPerWave: 6,
+        corvettes: 2,
         dreadnought: true,
-        dreadnoughtEscorts: 6,
+        dreadnoughtEscorts: 4,
         waveInterval: 14
       }
     ];
+
+    const audioEngine = {
+      ctx: null,
+      noiseBuffer: null,
+      lastLaserTime: 0
+    };
 
   function init() {
   resize();
   window.addEventListener("resize", resize);
   window.addEventListener("keydown", e => {
+  primeAudio();
   state.inputs[e.key.toLowerCase()] = true;
   if (!state.running && e.key.toLowerCase() === "r") resetGame();
   if (e.key === "F1") toggleDebugMode();
   });
   window.addEventListener("keyup", e => state.inputs[e.key.toLowerCase()] = false);
+  window.addEventListener("pointerdown", primeAudio);
+  window.addEventListener("touchstart", primeAudio, { passive: true });
   createStars();
   resetGame();
   requestAnimationFrame(loop);
@@ -159,6 +186,137 @@
     state.chainReactions = [];
   }
 
+  function primeAudio() {
+    // ユーザー操作が入ったら即座にAudioContextを用意
+    ensureAudioContext();
+  }
+
+  function ensureAudioContext() {
+    if (typeof window === "undefined") return null;
+    const ctor = window.AudioContext || window.webkitAudioContext;
+    if (!ctor) return null;
+    if (!audioEngine.ctx) {
+      audioEngine.ctx = new ctor();
+      audioEngine.noiseBuffer = buildNoiseBuffer(audioEngine.ctx);
+    }
+    if (audioEngine.ctx.state === "suspended") {
+      audioEngine.ctx.resume();
+    }
+    return audioEngine.ctx;
+  }
+
+  function buildNoiseBuffer(ctx) {
+    const duration = 0.5;
+    const buffer = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      const decay = 1 - i / data.length;
+      data[i] = (Math.random() * 2 - 1) * decay;
+    }
+    return buffer;
+  }
+
+  function playLaserSound() {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (now - audioEngine.lastLaserTime < 0.03) return;
+    audioEngine.lastLaserTime = now;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(720, now);
+    osc.frequency.exponentialRampToValueAtTime(320, now + 0.12);
+    gain.gain.setValueAtTime(0.23, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.16);
+  }
+
+  function playEnemyRocketSound() {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(420, now);
+    osc.frequency.exponentialRampToValueAtTime(260, now + 0.18);
+    gain.gain.setValueAtTime(0.16, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 600;
+    filter.Q.value = 1.2;
+    osc.connect(filter).connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.24);
+  }
+
+  function playExplosionSound(power = 1) {
+    const ctx = ensureAudioContext();
+    if (!ctx || !audioEngine.noiseBuffer) return;
+    const noise = ctx.createBufferSource();
+    noise.buffer = audioEngine.noiseBuffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(800 + power * 500, ctx.currentTime);
+    const gain = ctx.createGain();
+    const startGain = 0.32 * power;
+    gain.gain.setValueAtTime(startGain, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    noise.connect(filter).connect(gain).connect(ctx.destination);
+    noise.start();
+    noise.stop(ctx.currentTime + 0.6);
+  }
+
+  function spawnEnemyRocket(origin, dir, options = {}) {
+    // 敵弾をロケット形態に統一し、加速や残光を付与
+    const speed = options.speed ?? 8;
+    const accel = options.accel ?? 16;
+    const maxSpeed = options.maxSpeed ?? 36;
+    const rocket = {
+      type: "rocket",
+      x: origin.x,
+      y: origin.y,
+      z: origin.z,
+      vx: dir.x * speed,
+      vy: dir.y * speed,
+      vz: dir.z * speed,
+      ax: dir.x * accel,
+      ay: dir.y * accel,
+      az: dir.z * accel,
+      maxSpeed,
+      trailTimer: 0,
+      color: options.color || "#f64",
+      glow: options.glow || "#ff8"
+    };
+    state.enemyShots.push(rocket);
+    playEnemyRocketSound();
+  }
+
+  function spawnRocketTrail(rocket) {
+    // ロケットの残炎を粒子化して視認性を高める
+    const backstep = 0.4;
+    const px = rocket.x - rocket.vx * backstep * 0.02;
+    const py = rocket.y - rocket.vy * backstep * 0.02;
+    const pz = rocket.z - rocket.vz * backstep * 0.02;
+    state.explosions.push({
+      x: px,
+      y: py,
+      z: pz,
+      vx: (Math.random() - 0.5) * 2,
+      vy: (Math.random() - 0.5) * 2,
+      vz: -8 + Math.random() * 3,
+      life: 0.18 + Math.random() * 0.12,
+      color: rocket.color || "#f64",
+      width: 1.4,
+      glow: rocket.glow || "#ff8",
+      glowBlur: 6
+    });
+  }
+
   function showMessage(text, duration = 3) {
     message.textContent = text;
     state.messageTimer = duration;
@@ -169,6 +327,10 @@
       const zone = stageZones[state.zoneSpawnIndex];
       if (state.timeSinceStart < zone.startDelay) break;
       state.zoneSpawnIndex += 1;
+      if (zone.message) {
+        // ゾーン固有メッセージで艦隊戦などの山場を通知
+        showMessage(zone.message, zone.messageDuration || 3.5);
+      }
       spawnZoneFighters(zone);
       if (zone.corvettes) spawnZoneCorvettes(zone);
       if (zone.battleships) spawnZoneBattleships(zone);
@@ -261,19 +423,37 @@
 
   function spawnZoneBattleships(zone) {
     const spacing = zone.battleSpacing || 22;
-    for (let i = 0; i < stageConfig.battleships; i++) {
-      const lane = i - (stageConfig.battleships - 1) / 2;
+    const shipCount = zone.battleshipCount ?? stageConfig.battleships;
+    for (let i = 0; i < shipCount; i++) {
+      const lane = i - (shipCount - 1) / 2;
       const baseX = lane * 26;
       const baseY = (Math.random() - 0.5) * 32;
       const baseZ = zone.baseZ - i * spacing;
       const ship = createBattleship(baseX, baseY, baseZ);
       state.enemies.push(ship);
       const escorts = zone.escortsPerShip ?? stageConfig.escortsPerShip;
+      // ゾーンごとに護衛艦の列数を増やし、後半の密度を底上げ
       for (let e = 0; e < escorts; e++) {
         const offsetX = baseX + (e % 2 === 0 ? -10 : 10);
         const offsetY = baseY + (e === 0 ? -6 : 6);
         const offsetZ = baseZ + 10 + e * 4;
         state.enemies.push(createEscort(offsetX, offsetY, offsetZ));
+      }
+      const ringCount = zone.fleetEscortRing ?? 0;
+      if (ringCount > 0) {
+        // 螺旋状の追加護衛で艦隊戦らしい包囲感を演出
+        const radius = zone.fleetEscortRadius ?? 20;
+        const offsetZ = zone.fleetEscortOffsetZ ?? 8;
+        for (let r = 0; r < ringCount; r++) {
+          const angle = (Math.PI * 2 * r) / ringCount;
+          const escortX = baseX + Math.cos(angle) * radius;
+          const escortY = baseY + Math.sin(angle) * radius * 0.6;
+          const escortZ = baseZ + offsetZ + r * 1.1;
+          const ringEscort = createEscort(escortX, escortY, escortZ);
+          ringEscort.vx *= 0.4;
+          ringEscort.vy *= 0.4;
+          state.enemies.push(ringEscort);
+        }
       }
     }
   }
@@ -430,8 +610,144 @@
       scoreAwarded: false,
       explosionDelay: 0,
       driftPhase: Math.random() * Math.PI * 2,
-      coreAnnounced: false
+      coreAnnounced: false,
+      // 航空母艦らしく戦闘機を継続発艦させるための管理フラグ
+      carrierTag: `carrier_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,6)}`,
+      carrierLaunchTimer: 0,
+      carrierLaunchInterval: 2.8,
+      carrierLaunchBurst: 4,
+      carrierMaxActive: 12,
+      carrierLaunchAnnounced: false
     };
+  }
+
+  function handleCarrierLaunch(enemy, dt) {
+    // ハンガーが健在な間は一定間隔で戦闘機を甲板から発進させる
+    if (enemy.pendingExplosion) return;
+    const hangar = enemy.segmentMap?.hangar;
+    if (!hangar || hangar.destroyed) return;
+    enemy.carrierLaunchTimer = (enemy.carrierLaunchTimer || 0) + dt;
+    const interval = enemy.carrierLaunchInterval || 3.2;
+    if (enemy.carrierLaunchTimer < interval) return;
+    const maxActive = enemy.carrierMaxActive || 12;
+    const active = countCarrierFighters(enemy);
+    if (active >= maxActive) return;
+    enemy.carrierLaunchTimer = 0;
+    const spawnTotal = Math.min(enemy.carrierLaunchBurst || 3, maxActive - active);
+    if (spawnTotal <= 0) return;
+    if (!enemy.carrierLaunchAnnounced) {
+      showMessage("CARRIER DECK LAUNCH - INTERCEPT", 3.2);
+      enemy.carrierLaunchAnnounced = true;
+    }
+    for (let i = 0; i < spawnTotal; i++) {
+      state.enemies.push(spawnCarrierFighter(enemy, hangar, i, spawnTotal));
+    }
+  }
+
+  function countCarrierFighters(enemy) {
+    const tag = enemy.carrierTag;
+    if (!tag) return 0;
+    let active = 0;
+    for (const foe of state.enemies) {
+      if (foe.type === "fighter" && foe.carrierTag === tag && !foe.retired && !foe.pendingExplosion) {
+        active += 1;
+      }
+    }
+    return active;
+  }
+
+  function spawnCarrierFighter(enemy, hangarSegment, index, total) {
+    // ハンガー口から扇状に飛び出すように座標と速度を付与
+    const segPos = segmentWorldPosition(enemy, hangarSegment);
+    const spread = (index - (total - 1) / 2) * 4;
+  const fighter = createFighter(
+      segPos.x + spread + (Math.random() - 0.5) * 2.4,
+      segPos.y - 2 + (Math.random() - 0.5) * 2,
+      segPos.z + 8 + Math.random() * 4
+    );
+    fighter.carrierTag = enemy.carrierTag;
+    fighter.vx += (Math.random() - 0.5) * 2;
+    fighter.vy += -4 - Math.random() * 2;
+    fighter.retreatSpeed = Math.max(18, fighter.retreatSpeed - 4);
+    fighter.maxApproachRate += 4;
+    fighter.flash = 0.35;
+    fighter.carrierOrbital = true;
+    fighter.orbitAngle = Math.random() * Math.PI * 2;
+    fighter.orbitSpeed = 0.9 + Math.random() * 0.9;
+    fighter.orbitRadius = 14 + Math.random() * 8;
+    fighter.orbitHeight = 6 + Math.random() * 5;
+    fighter.carrierPhase = "orbit";
+    fighter.carrierPhaseTimer = 0;
+    fighter.carrierOrbitDuration = 1.8 + Math.random() * 1.6;
+    fighter.carrierDiveBias = Math.random() * 0.8 - 0.4;
+    fighter.carrierRoll = 0;
+    return fighter;
+  }
+
+  function updateCarrierInterceptor(enemy, dt) {
+    // フェーズ制で周遊→急降下→上昇に遷移させて戦闘機らしい挙動を再現
+    enemy.carrierPhaseTimer = (enemy.carrierPhaseTimer || 0) + dt;
+    enemy.orbitAngle = (enemy.orbitAngle || 0) + dt * (enemy.orbitSpeed || 1.1);
+    const baseX = state.yaw * 2.6;
+    const baseY = -state.pitch * 1.4;
+    const radius = enemy.orbitRadius || 16;
+    const phase = enemy.carrierPhase || "orbit";
+    if (phase === "orbit") {
+      const desiredX = baseX + Math.cos(enemy.orbitAngle) * radius;
+      const desiredY = baseY + Math.sin(enemy.orbitAngle) * radius * 0.7;
+      const desiredZ = 70 + Math.sin(enemy.orbitAngle * 1.35) * (enemy.orbitHeight || 8);
+      enemy.vx += (desiredX - enemy.x) * dt * 7.2;
+      enemy.vy += (desiredY - enemy.y) * dt * 7.2;
+      enemy.z += (desiredZ - enemy.z) * dt * 4.8;
+      enemy.vx += Math.cos(enemy.orbitAngle + Math.PI / 2) * 2.4 * dt;
+      enemy.vy += Math.sin(enemy.orbitAngle + Math.PI / 2) * 2.4 * dt;
+      const desiredRoll = Math.sin(enemy.orbitAngle * 1.2) * 28;
+      const currentRoll = enemy.carrierRoll || 0;
+      enemy.carrierRoll = currentRoll + (desiredRoll - currentRoll) * dt * 2.8;
+      if (enemy.carrierPhaseTimer > (enemy.carrierOrbitDuration || 2.2)) {
+        enemy.carrierPhase = "dive";
+        enemy.carrierPhaseTimer = 0;
+      }
+    } else if (phase === "dive") {
+      const targetX = state.yaw * 0.6 + enemy.carrierDiveBias;
+      const targetY = -state.pitch * 0.6;
+      const targetZ = 22;
+      enemy.vx += (targetX - enemy.x) * dt * 9.5;
+      enemy.vy += (targetY - enemy.y) * dt * 9.5;
+      enemy.z += (targetZ - enemy.z) * dt * 8.2;
+      enemy.carrierRoll = Math.min(55, (enemy.carrierRoll || 0) + dt * 180);
+      if (enemy.carrierPhaseTimer > 1.6 || enemy.z < 26) {
+        enemy.carrierPhase = "climb";
+        enemy.carrierPhaseTimer = 0;
+      }
+    } else {
+      const climbTargetZ = 80;
+      const lateralDrift = Math.sin(enemy.orbitAngle) * radius * 0.4;
+      enemy.vx += (baseX + lateralDrift - enemy.x) * dt * 6.4;
+      enemy.vy += (baseY - lateralDrift * 0.5 - enemy.y) * dt * 6.4;
+      enemy.z += (climbTargetZ - enemy.z) * dt * 5.2;
+      enemy.carrierRoll = Math.max(0, (enemy.carrierRoll || 0) - dt * 160);
+      if (enemy.carrierPhaseTimer > 1.4) {
+        enemy.carrierPhase = "orbit";
+        enemy.carrierPhaseTimer = 0;
+        enemy.carrierOrbitDuration = 1.6 + Math.random() * 1.8;
+      }
+    }
+  }
+
+  function updateFormationFighterFlight(enemy, dt, formationTarget) {
+    // フォーメーション戦闘機をなめらかなバンク＆ノーズ制御で飛ばす
+    const aimX = formationTarget ? formationTarget.x : state.yaw * 3.2;
+    const aimY = formationTarget ? formationTarget.y : -state.pitch * 2;
+    const desiredVX = (aimX - enemy.x) * 2.6;
+    const desiredVY = (aimY - enemy.y) * 2.0;
+    enemy.vx += (desiredVX - enemy.vx) * dt * 4.1;
+    enemy.vy += (desiredVY - enemy.vy) * dt * 3.8;
+    enemy.vy += Math.sin(enemy.age * 2.3) * dt * 1.4;
+    const bankTarget = Math.max(-50, Math.min(50, (desiredVX - enemy.vx) * 2.2));
+    const currentRoll = enemy.flightRoll || 0;
+    enemy.flightRoll = currentRoll + (bankTarget - currentRoll) * dt * 5.4;
+    enemy.vx += Math.cos(enemy.age * 1.2 + enemy.flightRoll * 0.05) * dt * 0.8;
   }
 
   function handleInput(dt) {
@@ -470,6 +786,7 @@
       vz: baseVz
     });
   });
+  playLaserSound();
   }
 
   function toggleDebugMode() {
@@ -480,14 +797,14 @@
   }
 
   function spawnExplosion(x, y, z, color, count) {
-  // ワイヤーフレーム風の飛散粒子を生成
+  // ワイヤーフレーム風の飛散粒子を生成（スローで余韻を強調）
   for (let i = 0; i < count; i++) {
-    const speed = 40 + Math.random() * 60;
+    const speed = 18 + Math.random() * 28;
   const theta = Math.random() * Math.PI * 2;
   const phi = Math.random() * Math.PI;
   const vx = Math.cos(theta) * Math.sin(phi) * speed;
   const vy = Math.sin(theta) * Math.sin(phi) * speed;
-  const vz = Math.cos(phi) * speed;
+  const vz = Math.cos(phi) * speed * 0.7;
       state.explosions.push({
         x,
         y,
@@ -495,7 +812,7 @@
         vx,
         vy,
         vz,
-        life: 0.6 + Math.random() * 0.4,
+        life: 0.9 + Math.random() * 0.7,
         color
       });
     }
@@ -525,9 +842,9 @@
 
   function spawnShardBurst(x, y, z, color = "#fff") {
     // 小型敵爆発に鋭い破片を足してスピード感を演出
-    const count = 26;
+    const count = 22;
     for (let i = 0; i < count; i++) {
-      const speed = 70 + Math.random() * 90;
+      const speed = 28 + Math.random() * 36;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.random() * Math.PI;
       state.explosions.push({
@@ -537,7 +854,7 @@
         vx: Math.cos(theta) * Math.sin(phi) * speed,
         vy: Math.sin(theta) * Math.sin(phi) * speed,
         vz: Math.cos(phi) * speed * 0.6,
-        life: 0.35 + Math.random() * 0.25,
+        life: 0.8 + Math.random() * 0.4,
         color,
         width: 2.2 + Math.random() * 1.4,
         glow: color,
@@ -553,16 +870,17 @@
       y,
       z,
       radius: 3,
-      expansion: 65,
-      life: 0.5,
-      initialLife: 0.5,
+      expansion: 42,
+      life: 0.9,
+      initialLife: 0.9,
       color,
-      width: 3.5
+      width: 4.5
     });
   }
 
   function spawnEnhancedEnemyExplosion(x, y, z, color = "#fff") {
     // 敵機撃破時は閃光→破片→残光の三段構えで派手さを底上げ
+    playExplosionSound(0.85);
     const accent = color === "#0f9" ? "#8ff" : "#0ff";
     spawnShockwaveRing(x, y, z, "#fff");
     spawnExplosion(x, y, z, color, 24);
@@ -684,6 +1002,7 @@
 
   function spawnBattleshipMegaExplosion(enemy) {
     // 爆発の粒子を多めに、ゆっくり広がるように
+    playExplosionSound(1.1);
     const colorCycle = ["#fff", "#0ff", "#f88"];
     const center = { x: enemy.x, y: enemy.y, z: enemy.z };
     for (let i = 0; i < 55; i++) {
@@ -708,6 +1027,7 @@
   }
 
   function spawnDreadnoughtCataclysm(enemy) {
+    playExplosionSound(1.4);
     const center = { x: enemy.x, y: enemy.y, z: enemy.z };
     const ringColors = ["#fff", "#0ff", "#f88"];
     for (let ring = 0; ring < 3; ring++) {
@@ -770,15 +1090,10 @@
     if (!isEnemyVisible(enemy)) return;
     if (Math.random() > enemyFireSettings.fireChance) return;
     const dir = aimAtPlayer(enemy);
-    const speed = 25 + Math.random() * 10;
-    state.enemyShots.push({
-      x: enemy.x,
-      y: enemy.y,
-      z: enemy.z - 6,
-      vx: dir.x * speed,
-      vy: dir.y * speed,
-      vz: dir.z * speed,
-      done: false
+    spawnEnemyRocket({ x: enemy.x, y: enemy.y, z: enemy.z - 6 }, dir, {
+      speed: 7 + Math.random() * 3,
+      accel: 18,
+      color: "#f64"
     });
   }
 
@@ -806,17 +1121,14 @@
       const delay = segment.fireDelay || enemy.fireDelay || 3.2;
       if (enemy.turretTimers[segment.key] < delay) continue;
       enemy.turretTimers[segment.key] = Math.random() * 0.8;
-      if (Math.random() > 0.65) continue;
+      if (Math.random() > 0.85) continue;
       const dir = aimFromPoint(segPos);
-      const speed = 22 + Math.random() * 12;
-      state.enemyShots.push({
-        x: segPos.x,
-        y: segPos.y,
-        z: segPos.z - 6,
-        vx: dir.x * speed,
-        vy: dir.y * speed,
-        vz: dir.z * speed,
-        done: false
+      spawnEnemyRocket({ x: segPos.x, y: segPos.y, z: segPos.z - 6 }, dir, {
+        speed: 6 + Math.random() * 2,
+        accel: 20,
+        maxSpeed: 34,
+        color: "#f88",
+        glow: "#fdd"
       });
     }
   }
@@ -863,26 +1175,38 @@
       for (const enemy of state.enemies) {
         enemy.age = (enemy.age || 0) + dt;
 
+        const isCarrierInterceptor = enemy.type === "fighter" && enemy.carrierTag;
         const retreatSpeed = enemy.retreatSpeed ?? settings.enemyRetreatBase;
         const maxApproach = enemy.maxApproachRate ?? settings.maxApproachRate;
         const recedeFactor = enemy.recedeFactor ?? settings.enemyRecedeFactor;
         if (!enemy.pendingExplosion) {
-          const relativeForward = state.speed - retreatSpeed;
-          if (relativeForward > 0) {
-            const approach = Math.min(relativeForward, maxApproach);
-            enemy.z -= approach * dt;
-          } else if (relativeForward < 0) {
-            const recede = Math.min(retreatSpeed, -relativeForward) * recedeFactor;
-            enemy.z += recede * dt;
+          if (isCarrierInterceptor) {
+            const orbitPhase = enemy.orbitAngle || 0;
+            const desiredZ = 68 + Math.sin(orbitPhase * 1.25) * 12;
+            enemy.z += (desiredZ - enemy.z) * dt * 4.8;
+          } else {
+            const relativeForward = state.speed - retreatSpeed;
+            if (relativeForward > 0) {
+              const approach = Math.min(relativeForward, maxApproach);
+              enemy.z -= approach * dt;
+            } else if (relativeForward < 0) {
+              const recede = Math.min(retreatSpeed, -relativeForward) * recedeFactor;
+              enemy.z += recede * dt;
+            }
           }
         }
 
         const formation = enemy.formationGroup ? state.formations[enemy.formationGroup] : null;
+        let formationTarget = null;
         if (formation && !enemy.pendingExplosion) {
-          const targetX = formation.anchorX + (enemy.formationOffset?.x || 0);
-          const targetY = formation.anchorY + (enemy.formationOffset?.y || 0);
-          const dx = targetX - enemy.x;
-          const dy = targetY - enemy.y;
+          formationTarget = {
+            x: formation.anchorX + (enemy.formationOffset?.x || 0),
+            y: formation.anchorY + (enemy.formationOffset?.y || 0)
+          };
+        }
+        if (formationTarget && !enemy.pendingExplosion && !isCarrierInterceptor && enemy.type !== "fighter") {
+          const dx = formationTarget.x - enemy.x;
+          const dy = formationTarget.y - enemy.y;
           enemy.vx = dx * 3;
           enemy.vy = dy * 3;
         }
@@ -894,13 +1218,18 @@
           releaseFormationSlot(enemy);
           continue;
         }
-        if (enemy.type === "corvette") {
+        if (isCarrierInterceptor) {
+          updateCarrierInterceptor(enemy, dt);
+        } else if (enemy.type === "fighter") {
+          updateFormationFighterFlight(enemy, dt, formationTarget);
+        } else if (enemy.type === "corvette") {
           enemy.x += Math.sin(enemy.age * 1.8 + enemy.phase) * 6 * dt;
           enemy.y += Math.cos(enemy.age * 1.2 + enemy.phase) * 3 * dt;
         } else if (enemy.type === "dreadnought") {
           const sway = enemy.pendingExplosion ? 0 : 1;
           enemy.x += Math.sin(enemy.age * 0.35 + enemy.driftPhase) * dt * 8 * sway;
           enemy.y += Math.cos(enemy.age * 0.28 + enemy.driftPhase) * dt * 4 * sway;
+          handleCarrierLaunch(enemy, dt);
         }
         if (enemy.pendingExplosion) {
           // 爆発までの遅延演出を進める
@@ -950,6 +1279,24 @@
       state.lasers = state.lasers.filter(l => l.z < 400 && !l.done);
       // 敵レーザーを移動させて自機に触れるか判定
       for (const shot of state.enemyShots) {
+        if (shot.type === "rocket") {
+          shot.vx += shot.ax * dt;
+          shot.vy += shot.ay * dt;
+          shot.vz += shot.az * dt;
+          const speed = Math.hypot(shot.vx, shot.vy, shot.vz);
+          const cap = shot.maxSpeed || 36;
+          if (speed > cap && speed > 0) {
+            const scale = cap / speed;
+            shot.vx *= scale;
+            shot.vy *= scale;
+            shot.vz *= scale;
+          }
+          shot.trailTimer = (shot.trailTimer || 0) + dt;
+          if (shot.trailTimer > 0.045) {
+            spawnRocketTrail(shot);
+            shot.trailTimer = 0;
+          }
+        }
         shot.x += shot.vx * dt;
         shot.y += shot.vy * dt;
         shot.z += shot.vz * dt;
@@ -957,6 +1304,7 @@
           shot.done = true;
           state.shield -= 8;
           spawnExplosion(shot.x, shot.y, shot.z, "#f44", 10);
+          playExplosionSound(0.4);
         }
       }
       state.enemyShots = state.enemyShots.filter(shot => shot.z > -20 && !shot.done);
@@ -1080,14 +1428,18 @@
       for (const laser of state.lasers) {
         drawPlayerLaser(laser);
       }
-      // 敵レーザーの描画
-      ctx.strokeStyle = "#f44";
+      // 敵ロケットの描画（視認性を高める）
       for (const shot of state.enemyShots) {
-        const p = project(shot);
-        ctx.beginPath();
-        ctx.moveTo(p.x - 1, p.y);
-        ctx.lineTo(p.x + 1, p.y);
-        ctx.stroke();
+        if (shot.type === "rocket") {
+          drawEnemyRocket(shot);
+        } else {
+          const p = project(shot);
+          ctx.strokeStyle = "#f44";
+          ctx.beginPath();
+          ctx.moveTo(p.x - 1, p.y);
+          ctx.lineTo(p.x + 1, p.y);
+          ctx.stroke();
+        }
       }
 
       // 敵ワイヤーフレーム（小型/大型）を描画
@@ -1165,10 +1517,19 @@
   function drawFighter(enemy) {
   const color = enemy.flash > 0 ? "#fff" : "#f0f";
   withDepthRendering(enemy, color, () => {
+    const rollDeg = enemy.carrierRoll ?? enemy.flightRoll ?? 0;
+    const rollRad = rollDeg * (Math.PI / 180);
+    const cosR = Math.cos(rollRad);
+    const sinR = Math.sin(rollRad);
+    const rollPoint = (lx, ly, lz) => ({
+      x: enemy.x + lx * cosR - ly * sinR,
+      y: enemy.y + lx * sinR + ly * cosR,
+      z: enemy.z + lz
+    });
     const points = [
-      { x: enemy.x - 6, y: enemy.y, z: enemy.z + 8 },
-      { x: enemy.x + 6, y: enemy.y, z: enemy.z + 8 },
-      { x: enemy.x, y: enemy.y, z: enemy.z - 10 }
+      rollPoint(-6, 0, 8),
+      rollPoint(6, 0, 8),
+      rollPoint(0, 0, -10)
     ].map(p => project(p));
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
@@ -1177,16 +1538,52 @@
     ctx.closePath();
     ctx.stroke();
     ctx.beginPath();
+    const leftTail = project(rollPoint(-4, -2, -4));
     ctx.moveTo(points[0].x, points[0].y);
-    ctx.lineTo(project({ x: enemy.x - 4, y: enemy.y - 2, z: enemy.z - 4 }).x, project({ x: enemy.x - 4, y: enemy.y - 2, z: enemy.z - 4 }).y);
+    ctx.lineTo(leftTail.x, leftTail.y);
     ctx.stroke();
     ctx.beginPath();
+    const rightTail = project(rollPoint(4, -2, -4));
     ctx.moveTo(points[1].x, points[1].y);
-    ctx.lineTo(project({ x: enemy.x + 4, y: enemy.y - 2, z: enemy.z - 4 }).x, project({ x: enemy.x + 4, y: enemy.y - 2, z: enemy.z - 4 }).y);
+    ctx.lineTo(rightTail.x, rightTail.y);
     ctx.stroke();
     ctx.lineWidth = 1;
     drawWireCube({ x: enemy.x, y: enemy.y, z: enemy.z }, 5, color);
   });
+  }
+
+  function drawEnemyRocket(shot) {
+    const head = project(shot);
+    const tailVec = {
+      x: shot.x - shot.vx * 0.12,
+      y: shot.y - shot.vy * 0.12,
+      z: shot.z - shot.vz * 0.12
+    };
+    const tail = project(tailVec);
+    const sideVec = {
+      x: shot.x + (shot.vy * 0.04),
+      y: shot.y - (shot.vx * 0.04),
+      z: shot.z
+    };
+    const side = project(sideVec);
+    ctx.save();
+    ctx.strokeStyle = shot.color || "#f64";
+    ctx.fillStyle = shot.color || "#f64";
+    ctx.lineWidth = 3.5;
+    ctx.shadowColor = shot.glow || "#ff8";
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.moveTo(head.x, head.y);
+    ctx.lineTo(tail.x, tail.y);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.moveTo(head.x, head.y);
+    ctx.lineTo(tail.x, tail.y);
+    ctx.lineTo(side.x, side.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawPlayerLaser(laser) {
