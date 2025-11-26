@@ -10,6 +10,36 @@
     #hud { position:absolute; bottom:12px; left:12px; font-size:14px; line-height:1.4; white-space:pre; }
     #comms { position:absolute; top:12px; left:12px; font-size:12px; line-height:1.4; max-width:360px; color:#8ff; text-shadow:0 0 6px #0bf; white-space:pre-line; }
     #message { position:absolute; top:36%; width:100%; text-align:center; font-size:32px; letter-spacing:4px; }
+    #aiPanel {
+      position:fixed;
+      top:8px;
+      left:8px;
+      width:150px;
+      height:100px;
+      image-rendering:pixelated;
+      image-rendering:crisp-edges;
+      z-index:1000;
+      pointer-events:none;
+    }
+    #aiPanelGuide {
+      position:fixed;
+      top:120px;
+      left:12px;
+      max-width:260px;
+      padding:4px 6px;
+      font-size:11px;
+      line-height:1.4;
+      font-family:"Roboto Mono","SFMono-Regular","Menlo",monospace;
+      color:#e9f5ff;
+      background:rgba(0,0,0,0.65);
+      border:1px solid rgba(255,255,255,0.5);
+      border-radius:4px;
+      letter-spacing:0.04em;
+      pointer-events:none;
+      z-index:1000;
+      opacity:0;
+      transition:opacity 0.3s ease;
+    }
   </style>
   </head>
   <body>
@@ -19,6 +49,8 @@
     <div id="hud"></div>
     <div id="message"></div>
   </div>
+  <canvas id="aiPanel" width="150" height="100" aria-hidden="true"></canvas>
+  <div id="aiPanelGuide" aria-hidden="true">VISION AI KEY: H = SHIELD / E = NEAREST ENEMY + DIST / S = PHASE CODE / EV = EVENT CODE</div>
   <script>
   (() => {
     const canvas = document.getElementById("screen");
@@ -26,6 +58,12 @@
     const hud = document.getElementById("hud");
     const message = document.getElementById("message");
     const comms = document.getElementById("comms");
+    const aiPanelCanvas = document.getElementById("aiPanel");
+    const aiPanelCtx = aiPanelCanvas ? aiPanelCanvas.getContext("2d", { alpha: false }) : null;
+    const aiPanelGuide = document.getElementById("aiPanelGuide");
+    if (aiPanelCtx) {
+      aiPanelCtx.imageSmoothingEnabled = false;
+    }
     const state = {
       running: true,
       enemies: [],
@@ -137,6 +175,95 @@
         waveInterval: 14
       }
     ];
+    let aiPanelTimer = null;
+
+    // === Vision-AI用パネル描画・テレメトリ ===
+    function renderAIPanel(snapshot) {
+      if (!aiPanelCtx || !aiPanelCanvas || !snapshot) return;
+      const width = aiPanelCanvas.width;
+      const height = aiPanelCanvas.height;
+      aiPanelCtx.save();
+      aiPanelCtx.fillStyle = "#000";
+      aiPanelCtx.fillRect(0, 0, width, height);
+      aiPanelCtx.fillStyle = "#fff";
+      aiPanelCtx.font = "12px \"Roboto Mono\", \"SFMono-Regular\", \"Menlo\", monospace";
+      aiPanelCtx.textBaseline = "top";
+      aiPanelCtx.textAlign = "left";
+      const lines = [
+        `H${snapshot.hp}`,
+        `E${snapshot.enemyId}/${snapshot.enemyDist}`,
+        `S${snapshot.stage}`,
+        `EV${snapshot.event}`
+      ];
+      for (let i = 0; i < lines.length; i++) {
+        aiPanelCtx.fillText(lines[i], 8, 8 + i * 20);
+      }
+      aiPanelCtx.restore();
+    }
+
+    function getNearestEnemySnapshot() {
+      let bestDist = Number.POSITIVE_INFINITY;
+      let bestId = "NONE";
+      for (const enemy of state.enemies) {
+        if (!enemy || enemy.retired) continue;
+        const dist = Math.abs(enemy.z ?? Number.POSITIVE_INFINITY);
+        if (!Number.isFinite(dist)) continue;
+        if (dist < bestDist) {
+          bestDist = dist;
+          const rawId = enemy.code || enemy.type || enemy.className || "UNK";
+          bestId = rawId.toString().toUpperCase().slice(0, 6);
+        }
+      }
+      if (!Number.isFinite(bestDist)) {
+        bestDist = 0;
+        bestId = "NONE";
+      }
+      return {
+        enemyId: bestId,
+        enemyDist: Math.max(0, Math.round(bestDist))
+      };
+    }
+
+    function deriveStageCode() {
+      if (state.warpPhase !== "combat") return "WP";
+      if (state.enemies.some(e => e.type === "dreadnought" && !e.pendingExplosion && !e.retired)) return "FG";
+      if (state.enemies.some(e => e.type === "battleship" && !e.pendingExplosion && !e.retired)) return "BS";
+      if (state.enemies.some(e => e.type === "corvette" && !e.pendingExplosion && !e.retired)) return "CV";
+      return "DF";
+    }
+
+    function deriveEventCode() {
+      if (!state.running && !state.debugMode) return 99;
+      if (state.warpPhase !== "combat") return 20;
+      if (state.enemies.some(e => e.type === "dreadnought" && !e.pendingExplosion && !e.retired)) return 80;
+      if (state.enemies.some(e => e.type === "battleship" && !e.pendingExplosion && !e.retired)) return 70;
+      if (state.shield <= 25 && !state.debugMode) return 40;
+      return 10;
+    }
+
+    function collectAIPanelState() {
+      const nearest = getNearestEnemySnapshot();
+      return {
+        hp: Math.max(0, Math.round(state.shield ?? 0)),
+        enemyId: nearest.enemyId,
+        enemyDist: nearest.enemyDist,
+        stage: deriveStageCode(),
+        event: deriveEventCode()
+      };
+    }
+
+    function initAIPanelLoop() {
+      if (!aiPanelCanvas || !aiPanelCtx || aiPanelTimer) return;
+      aiPanelTimer = setInterval(() => {
+        renderAIPanel(collectAIPanelState());
+      }, 300);
+    }
+
+    function updateAIPanelGuideVisibility() {
+      if (!aiPanelGuide) return;
+      const shouldShow = state.timeSinceStart < 12 && state.loopCount === 0;
+      aiPanelGuide.style.opacity = shouldShow ? "0.95" : "0";
+    }
 
     const audioEngine = {
       ctx: null,
@@ -158,6 +285,7 @@
   window.addEventListener("touchstart", primeAudio, { passive: true });
   createStars();
   resetGame();
+  initAIPanelLoop();
   requestAnimationFrame(loop);
   }
 
@@ -1599,6 +1727,7 @@
       hudLines.push(state.sectorLabel);
       comms.textContent = state.navLog.slice(-5).join("\n");
       hud.textContent = hudLines.join("\n");
+      updateAIPanelGuideVisibility();
 
   }
 
